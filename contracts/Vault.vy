@@ -1,4 +1,5 @@
 # @version 0.2.16
+# Yearn vaultV2 is modified to track total profits and totalrevenue to calculate incentives minted
 """
 @title Yearn Token Vault
 @license GNU AGPLv3
@@ -222,6 +223,9 @@ emergencyShutdown: public(bool)
 depositLimit: public(uint256)  # Limit for totalAssets the Vault can hold
 debtRatio: public(uint256)  # Debt ratio for the Vault across all strategies (in BPS, <= 10k)
 totalDebt: public(uint256)  # Amount of tokens that all strategies have borrowed
+totalProfit: public(uint256)  # Amount of tokens that all strategies have reported as profit
+totalRevenue: public(uint256)  # Amount of fees minted to governance and strategist
+
 lastReport: public(uint256)  # block.timestamp of last report
 activation: public(uint256)  # block.timestamp of contract deployment
 lockedProfit: public(uint256) # how much profit is locked and cant be withdrawn
@@ -1726,6 +1730,7 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
 
     # Assess both management fee and performance fee, and issue both as shares of the vault
     totalFees: uint256 = self._assessFees(msg.sender, gain)
+    totalRevenue += totalFees
 
     # Returns are always "realized gains"
     self.strategies[msg.sender].totalGain += gain
@@ -1788,6 +1793,8 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
         self.strategies[msg.sender].debtRatio,
     )
 
+    totalProfit += self.strategies[msg.sender].totalGain - self.strategies[msg.sender].totalLoss
+ 
     if self.strategies[msg.sender].debtRatio == 0 or self.emergencyShutdown:
         # Take every last penny the Strategy has (Emergency Exit/revokeStrategy)
         # NOTE: This is different than `debt` in order to extract *all* of the returns
