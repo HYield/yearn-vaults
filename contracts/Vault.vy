@@ -1730,6 +1730,7 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
 
     # Assess both management fee and performance fee, and issue both as shares of the vault
     totalFees: uint256 = self._assessFees(msg.sender, gain)
+    #update totalRevenue in want
     totalRevenue += totalFees
 
     # Returns are always "realized gains"
@@ -1792,8 +1793,16 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
         credit,
         self.strategies[msg.sender].debtRatio,
     )
+    # set it by default to 0
+    realGain: uint256 = 0
+    if loss > 0 and gain > loss:
+        realGain = gain - loss
+    else:
+        realGain = gain
 
-    totalProfit += self.strategies[msg.sender].totalGain - self.strategies[msg.sender].totalLoss
+    #Set total profit if there is profit after deducting losses
+    if realGain > 0:
+        totalProfit += realGain
  
     if self.strategies[msg.sender].debtRatio == 0 or self.emergencyShutdown:
         # Take every last penny the Strategy has (Emergency Exit/revokeStrategy)
