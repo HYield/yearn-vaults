@@ -88,6 +88,7 @@ token: public(ERC20)
 governance: public(address)
 management: public(address)
 guardian: public(address)
+incentivesManager: public(address)
 pendingGovernance: address
 
 healthCheck: public(address)
@@ -129,6 +130,8 @@ event UpdateGovernance:
 event NewPendingGovernance:
     governance: address # New pending governance
 
+event NewIncentivesManager:
+    manager:    address # New active incentives manager
 
 event UpdateManagement:
     management: address # New active manager
@@ -200,6 +203,9 @@ event StrategyAddedToQueue:
 event UpdateHealthCheck:
     healthCheck: indexed(address)
 
+event UpdateIncentivesManager:
+    incentivesManager: indexed(address)
+
 # NOTE: Track the total for overhead targeting purposes
 strategies: public(HashMap[address, StrategyParams])
 MAXIMUM_STRATEGIES: constant(uint256) = 20
@@ -224,6 +230,8 @@ depositLimit: public(uint256)  # Limit for totalAssets the Vault can hold
 debtRatio: public(uint256)  # Debt ratio for the Vault across all strategies (in BPS, <= 10k)
 totalDebt: public(uint256)  # Amount of tokens that all strategies have borrowed
 totalProfit: public(uint256)  # Amount of tokens that all strategies have reported as profit
+totalProfitCovered: public(uint256)  # Amount of profits that have been covered by incentives
+
 totalRevenue: public(uint256)  # Amount of fees minted to governance and strategist
 
 lastReport: public(uint256)  # block.timestamp of last report
@@ -314,6 +322,8 @@ def initialize(
     log UpdateManagementFee(convert(200, uint256))
     self.healthCheck = healthCheck
     log UpdateHealthCheck(healthCheck)
+    self.incentivesManager = guardian
+    log UpdateIncentivesManager(guardian)
 
     self.lastReport = block.timestamp
     self.activation = block.timestamp
@@ -390,6 +400,55 @@ def setGovernance(governance: address):
     log NewPendingGovernance(msg.sender)
     self.pendingGovernance = governance
 
+
+@external
+def setIncentivesManager(manager: address):
+    """
+    @notice
+        Set a new address to use as incentives manager.
+
+        This may only be called by the current governance address.
+    @param manager The address requested to take over Incentives management.
+    """
+    assert msg.sender == self.governance
+    log NewIncentivesManager(manager)
+    self.incentivesManager = manager
+
+# TODO remove internal and external references to this function
+@view
+@internal
+def _profitUncovered() -> uint256:
+    """
+    @notice
+        Returns the amount of profit that has not been covered by the
+        incentives.
+    @return The amount of profit that has not been covered by the incentives.
+    """
+    return self.totalProfit - self.totalProfitCovered
+
+@view
+@external
+def profitUncovered() -> uint256:
+    """
+    @notice
+        Returns the amount of profit that has not been covered by the
+        incentives.
+    @return The amount of profit that has not been covered by the incentives.
+    """
+    return self._profitUncovered()
+
+@external
+def updateIncentivesCovered(profitRecorded: uint256):
+    """
+    @notice
+        Updates the total profit recorded on incentives mint.
+
+        This may only be called by the current incentives manager address.
+    @param profitRecorded the amount of profit covered in incentives on call.
+    """
+    assert msg.sender == self.incentivesManager
+    assert profitRecorded <= self._profitUncovered()
+    self.totalProfitCovered = self.totalProfitCovered + profitRecorded
 
 @external
 def acceptGovernance():
@@ -1731,7 +1790,7 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
     # Assess both management fee and performance fee, and issue both as shares of the vault
     totalFees: uint256 = self._assessFees(msg.sender, gain)
     #update totalRevenue in want
-    totalRevenue += totalFees
+    self.totalRevenue += totalFees
 
     # Returns are always "realized gains"
     self.strategies[msg.sender].totalGain += gain
@@ -1802,7 +1861,7 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
 
     #Set total profit if there is profit after deducting losses
     if realGain > 0:
-        totalProfit += realGain
+        self.totalProfit += realGain
  
     if self.strategies[msg.sender].debtRatio == 0 or self.emergencyShutdown:
         # Take every last penny the Strategy has (Emergency Exit/revokeStrategy)
